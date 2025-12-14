@@ -1,0 +1,76 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x demo/gradlew
+
+      - name: Build with Gradle
+        run: |
+          cd demo
+          ./gradlew bootJar
+
+      - name: Upload JAR artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-jar
+          path: demo/build/libs/*.jar
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download JAR artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: app-jar
+          path: artifact
+
+      - name: Deploy to EC2
+        env:
+          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USERNAME }}
+        run: |
+          # Save private key to a file
+          echo "$PRIVATE_KEY" > private_key.pem
+          chmod 600 private_key.pem
+
+          # Ensure .ssh directory exists and add host to known_hosts to avoid interactive prompt
+          mkdir -p ~/.ssh
+          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+
+          # Copy JAR to EC2
+          scp -i private_key.pem artifact/*.jar $USER@$HOST:/home/$USER/app.jar
+
+          # SSH into EC2 to restart application
+          ssh -i private_key.pem $USER@$HOST << 'EOF'
+            # Stop existing java process (if any)
+            # CAUTION: This kills ALL java processes. Adjust if you run other java apps.
+            pkill java || true
+            
+            # Use nohup to run in background
+            # Assumes java is in path. If not, use absolute path (e.g., /usr/bin/java)
+            nohup java -jar /home/$USER/app.jar > /home/$USER/app.log 2>&1 &
+            
+            echo "Deployment successful. Application started."
+          EOF
+          
+          # Cleanup
+          rm private_key.pem
