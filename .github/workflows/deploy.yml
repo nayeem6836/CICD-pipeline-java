@@ -1,4 +1,4 @@
-name: Deploy to EC2
+name: Deploy Java App to EC2
 
 on:
   push:
@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,7 +27,7 @@ jobs:
           cd demo
           ./gradlew bootJar
 
-      - name: Upload JAR artifacts
+      - name: Upload JAR artifact
         uses: actions/upload-artifact@v4
         with:
           name: app-jar
@@ -35,6 +36,7 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+
     steps:
       - name: Download JAR artifact
         uses: actions/download-artifact@v4
@@ -42,35 +44,32 @@ jobs:
           name: app-jar
           path: artifact
 
-      - name: Deploy to EC2
+      - name: Deploy to EC2 and Run App
         env:
-          PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-          HOST: ${{ secrets.EC2_HOST }}
-          USER: ${{ secrets.EC2_USERNAME }}
+          EC2_KEY: ${{ secrets.EC2_SSH_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: root
         run: |
-          # Save private key to a file
-          echo "$PRIVATE_KEY" > private_key.pem
+          echo "$EC2_KEY" > private_key.pem
           chmod 600 private_key.pem
 
-          # Ensure .ssh directory exists and add host to known_hosts to avoid interactive prompt
           mkdir -p ~/.ssh
-          ssh-keyscan -H "$HOST" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
 
-          # Copy JAR to EC2
-          scp -i private_key.pem artifact/*.jar $USER@$HOST:/home/$USER/app.jar
+          echo "📦 Copying JAR to EC2..."
+          scp -i private_key.pem artifact/*.jar $EC2_USER@$EC2_HOST:/root/app.jar
 
-          # SSH into EC2 to restart application
-          ssh -i private_key.pem $USER@$HOST << 'EOF'
-            # Stop existing java process (if any)
-            # CAUTION: This kills ALL java processes. Adjust if you run other java apps.
-            pkill java || true
-            
-            # Use nohup to run in background
-            # Assumes java is in path. If not, use absolute path (e.g., /usr/bin/java)
-            nohup java -jar /home/$USER/app.jar > /home/$USER/app.log 2>&1 &
-            
-            echo "Deployment successful. Application started."
+          echo "🚀 Restarting application on EC2..."
+          ssh -i private_key.pem $EC2_USER@$EC2_HOST << EOF
+            set -e
+
+            echo "Stopping old app (if running)..."
+            pkill -f app.jar || true
+
+            echo "Starting new app..."
+            nohup java -jar /root/app.jar > /root/app.log 2>&1 &
+
+            echo "✅ Application deployed successfully"
           EOF
-          
-          # Cleanup
-          rm private_key.pem
+
+          rm -f private_key.pem
