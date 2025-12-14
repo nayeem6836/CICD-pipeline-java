@@ -8,6 +8,6 @@ public class HomeController {
 
     @GetMapping("/")
     public String home() {
-        return "Java App Deployed Successfully 🚀";
+        return "Java App Deployed SuccessfullY 🚀";
     }
 }
